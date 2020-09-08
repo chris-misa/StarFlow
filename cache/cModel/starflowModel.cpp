@@ -29,8 +29,9 @@ using namespace std;
 // partition 2 length, partition 2 width
 
 // Static options.
-#define TRACETYPE 1 // Trace type: 0 = ethernet, 1 = ip4v (i.e., caida)
+#define TRACETYPE 0 // Trace type: 0 = ethernet, 1 = ip4v (i.e., caida)
 #define UPDATE_CT 10000 // Print stats every UPDATE_CT packets.
+#define UPDATE_USEC 5000000
 
 uint64_t maxLastAccessTs = 0;
 uint64_t sumLastAccessTs = 0;
@@ -185,7 +186,8 @@ void handlePacket(){
   }
 
   // Stats stuff. 
-  if (globalPktCt % UPDATE_CT == 0){
+  if (curTs % UPDATE_USEC == 0) {
+  // if (globalPktCt % UPDATE_CT == 0){
     printStats();
   }
 
@@ -352,12 +354,12 @@ void printStats(){
   cout << "---------------------- trace time (usec): " << curTs << " ----------------------" << endl; 
   cout << "\t # packets processed: " << globalPktCt << endl;
   cout << "\t # GPVs generated: " << globalMfCt << endl;
-  cout << "\t GPV to packet ratio: " << float(globalMfCt) / float(globalPktCt) << endl;
+  cout << "\t GPV to packet ratio: " << (globalPktCt != 0 ? float(globalMfCt) / float(globalPktCt) : 0.0) << endl;
   cout << "\t # evicts: " << lruEvicts << endl; 
   cout << "\t # rollovers in short partition: " << shortRollovers << endl;
   cout << "\t # rollovers in long partition: " << longRollovers << endl;
   // cout << "\t mfs with fin flags: " << globalFinMfCt << endl;
-  cout << "\t avg time in cache (usec): " << (sumLastAccessTs/globalMfCt) <<endl;
+  cout << "\t avg time in cache (usec): " << (globalMfCt != 0 ? (sumLastAccessTs/globalMfCt) : 0.0) <<endl;
   cout << "\t max time in cache: " << maxLastAccessTs << endl;
   cout << "\t # flows that spent more than 1 second in cache: " << gtOneSecondInCache << endl;
   cout << "\t # flows that spent more than 5 seconds in cache: " << gtFiveSecondInCache << endl;
@@ -434,6 +436,8 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr* pkthdr, const u_c
     ethernetHeader = (struct ether_header*)packet;
     if (ntohs(ethernetHeader->ether_type) == ETHERTYPE_IP) {
         ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
+    } else {
+        return; // Ignore non-ipv4 packets ;)
     }
   }
   else if (TRACETYPE == 1) {
