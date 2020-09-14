@@ -13,14 +13,12 @@
 
 #include <list>
 #include "MurmerHash3.h"
+#include "agg_levels.h"
+
 using namespace std;
 uint64_t gpid = 0;
 
 // Structs and support functions for *Flow. 
-
-
-#define KEYLEN 13 // Length of key used in any flow tables. 
-
 
 struct GPVHeader {
   char key[KEYLEN];
@@ -125,10 +123,7 @@ struct CLFR_Value {
 
 
 
-
-
 // Helpers.
-void setKey(char *keyBuf, const struct ip* ipHeader, const struct udphdr* udpOrtcpHeader);
 uint64_t getMicrosecondTs(uint32_t seconds, uint32_t microSeconds);
 MCLFR * newMicroflow(uint64_t curTs, const struct ip* ipHeader, const struct udphdr* udpOrtcpHeader);
 unsigned simpleHash(unsigned int p, const char* s, int len, int maxHashVal);
@@ -155,13 +150,6 @@ uint64_t getMicrosecondTs(uint32_t seconds, uint32_t microSeconds){
   return ts;
 }
 
-void setKey(char *keyBuf, const struct ip* ipHeader, const struct udphdr* udpOrtcpHeader){
-  memcpy(&(keyBuf[0]), &ipHeader->ip_src, 4);
-  memcpy(&(keyBuf[4]), &ipHeader->ip_dst, 4);
-  memcpy(&(keyBuf[8]), &udpOrtcpHeader->source, 2);
-  memcpy(&(keyBuf[10]), &udpOrtcpHeader->dest, 2);
-  memcpy(&(keyBuf[12]), &ipHeader->ip_p, 1);
-}
 
 
 // A simple hashing function.

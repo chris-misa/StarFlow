@@ -186,8 +186,13 @@ void handlePacket(){
   }
 
   // Stats stuff. 
-  if (curTs % UPDATE_USEC == 0) {
-  // if (globalPktCt % UPDATE_CT == 0){
+  /* Ugly stuff to get nice time-based epoch boundaries */
+  static uint64_t lastTs = 0;
+  static uint64_t epochTs = 0;
+  epochTs += (curTs - lastTs);
+  lastTs = curTs;
+  if (epochTs >= UPDATE_USEC) {
+    epochTs -= UPDATE_USEC;
     printStats();
   }
 
