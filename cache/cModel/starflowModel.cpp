@@ -30,13 +30,21 @@ using namespace std;
 
 // Static options.
 #define TRACETYPE 0 // Trace type: 0 = ethernet, 1 = ip4v (i.e., caida)
-#define UPDATE_CT 10000 // Print stats every UPDATE_CT packets.
+// #define UPDATE_CT 1000000 // Print stats every UPDATE_CT packets.
 #define UPDATE_USEC 5000000
 
 uint64_t maxLastAccessTs = 0;
 uint64_t sumLastAccessTs = 0;
 uint64_t gtOneSecondInCache = 0;
 uint64_t gtFiveSecondInCache = 0;
+
+#define PACKET_COUNT 0 // 0 to process whole trace
+char * summaryResultsFile = "starflow_results.out";
+ofstream so;
+bool saveSummary = true;
+char * SUMMARY_HEADER_STRING = "\"file\" \"epoch\" \"agg\" \"total_pkts\" \"evictions\"";
+
+int file_idx;
 
 char * outputFile = "mCLFRs.bin";
 ofstream o;
@@ -73,6 +81,10 @@ uint64_t globalFinMfCt;
 uint64_t allocFailEvicts, lruEvicts, oversizeEvicts, shortRollovers, longRollovers;
 
 uint64_t startTs, curTs;
+
+uint64_t curEpoch = 0;
+uint64_t lastTs = 0;
+uint64_t epochTs = 0;
 
 std::vector<Export_MCLFR> mCLFR_out;
 
@@ -187,27 +199,36 @@ void handlePacket(){
 
   // Stats stuff. 
   /* Ugly stuff to get nice time-based epoch boundaries */
-  static uint64_t lastTs = 0;
-  static uint64_t epochTs = 0;
-  epochTs += (curTs - lastTs);
-  lastTs = curTs;
-  if (epochTs >= UPDATE_USEC) {
-    epochTs -= UPDATE_USEC;
-    printStats();
+  /* We just skip old packets that occure due to some boundary overlaps in CIADA trace */
+  if (curTs >= lastTs) {
+      epochTs += (curTs - lastTs);
+      if (epochTs >= UPDATE_USEC) {
+        epochTs -= UPDATE_USEC;
+        curEpoch++;
+        printStats();
+        /* skip ahead? */
+        if (epochTs >= UPDATE_USEC) {
+            fprintf(stderr, "Failed to bring back epochTs = %llu, UPDATE_USEC = %llu, curTs = %llu, lastTs = %llu\n", epochTs, UPDATE_USEC, curTs, lastTs);
+            while (epochTs >= UPDATE_USEC) {
+                epochTs -= UPDATE_USEC;
+            }
+        }
+      }
+      lastTs = curTs;
   }
 
-  if ((trainingTime > 0) && ((curTs) > trainingTime*1000)){
-    cout << "exiting training." << endl;
-    printStats();
+  // if ((trainingTime > 0) && ((curTs) > trainingTime*1000)){
+  //   cout << "exiting training." << endl;
+  //   // printStats();
 
-    if (dump){
-      finalFlush();
-      dumpCtFile();
-      // dumpMClfrs();
-    }
-    exit(0);
-  }
-  // exit(1);
+  //   if (dump){
+  //     finalFlush();
+  //     dumpCtFile();
+  //     // dumpMClfrs();
+  //   }
+  //   //exit(0);
+  // }
+  // // exit(1);
 
 }
 
@@ -217,7 +238,7 @@ uint64_t getSlotId(){
   uint64_t matchPos;
   bool hasFree = false;
   uint64_t freePos;
-  uint64_t oldestPos;
+  uint64_t oldestPos = 0; /* CM: added initialization here */
   uint64_t oldestTs = curTs+1;
 
   for (int cPos = 0; cPos < lruChainLen; cPos++){
@@ -369,57 +390,103 @@ void printStats(){
   cout << "\t # flows that spent more than 1 second in cache: " << gtOneSecondInCache << endl;
   cout << "\t # flows that spent more than 5 seconds in cache: " << gtFiveSecondInCache << endl;
   cout << "------------------------------------------------------------------" << endl;
+
+  if (saveSummary) {
+    so << file_idx << " " << curEpoch << " " << cur_key_gen << " " << globalPktCt << " " << lruEvicts << endl;
+  }
 }
 
 void packetHandler(u_char *userData, const struct pcap_pkthdr* pkthdr, const u_char* packet);
 
 int main(int argc, char *argv[]){
-  if (argc != 8){
+  if (argc < 8){
     cout << "incorrect number of arguments. Need 7. filename, training time, lru chain length, partition 1 length, partition 1 width, partition 2 length, partition 2 width." << endl;
     exit(0);
   }
-  inputFile = argv[1];
-  cout << "reading from file: " << inputFile << endl;
-  trainingTime = atoi(argv[2]);
-  lruChainLen = atoi(argv[3]);
-  partition1Len = atoi(argv[4]);
-  partition1Width = atoi(argv[5]);
-  partition2Len = atoi(argv[6]);
-  partition2Width = atoi(argv[7]);
-  cout << "params: " << " trainingTime: " << trainingTime << " lruChainLen: " << lruChainLen << " partition1Len:" << partition1Len << " partition1Width: " << partition1Width << " partition2Len: " << partition2Len << " partition2Width: " << partition2Width << endl;
 
-  initTables();
-  cout << "tables initialized." << endl;
 
-  if (dump){
-    cout << "dumping mCLFRs to: " << outputFile << endl;
-    o.open(outputFile, ios::binary);
+  trainingTime = atoi(argv[1]);
+  lruChainLen = atoi(argv[2]);
+  partition1Len = atoi(argv[3]);
+  partition1Width = atoi(argv[4]);
+  partition2Len = atoi(argv[5]);
+  partition2Width = atoi(argv[6]);
+
+  if (saveSummary) {
+    so.open(summaryResultsFile);
+    so << SUMMARY_HEADER_STRING << endl;
   }
 
-  // Process packets. 
-  pcap_t *descr;
-  char errbuf[PCAP_ERRBUF_SIZE];
-  // open capture file for offline processing
-  descr = pcap_open_offline(inputFile, errbuf);
-  if (descr == NULL) {
-      cerr << "pcap_open_live() failed: " << errbuf << endl;
-      return 1;
+  for (file_idx = 7; file_idx < argc; file_idx++) {
+    
+    inputFile = argv[file_idx];
+    cout << "reading from file: " << inputFile << endl;
+    cout << "params: " << " trainingTime: " << trainingTime << " lruChainLen: " << lruChainLen << " partition1Len:" << partition1Len << " partition1Width: " << partition1Width << " partition2Len: " << partition2Len << " partition2Width: " << partition2Width << endl;
+
+    pcap_t *descr;
+    char errbuf[PCAP_ERRBUF_SIZE];
+
+    for (cur_key_gen = 0; cur_key_gen < NUM_KEYGENS; cur_key_gen++) {
+      cout << "===================== Running for key gen " << cur_key_gen << " =======================" << endl;
+
+      // Reset original initialization of globals
+      maxLastAccessTs = 0;
+      sumLastAccessTs = 0;
+      gtOneSecondInCache = 0;
+      gtFiveSecondInCache = 0;
+      gpid = 0;
+      stackTop = 0;
+      curEpoch = 0;
+      lastTs = 0;
+      epochTs = 0;
+      curTs = 0;
+      startTs = 0;
+      memset(lastLongUse, 0, sizeof(uint64_t) * 1024);
+      memset(accessCounts, 0, sizeof(uint64_t) * 1024);
+      
+      globalPktCt = 0;
+      globalMfCt = 0;
+      globalFinMfCt = 0;
+      allocFailEvicts = 0;
+      lruEvicts = 0;
+      oversizeEvicts = 0;
+      shortRollovers = 0;
+      longRollovers = 0;
+
+      initTables();
+      cout << "tables initialized." << endl;
+
+      if (dump){
+        cout << "dumping mCLFRs to: " << outputFile << endl;
+        o.open(outputFile, ios::binary);
+      }
+
+      // Process packets. 
+      // open capture file for offline processing
+      descr = pcap_open_offline(inputFile, errbuf);
+      if (descr == NULL) {
+          cerr << "pcap_open_live() failed: " << errbuf << endl;
+          return 1;
+      }
+      // start packet processing loop, just like live capture
+      if (pcap_loop(descr, PACKET_COUNT, packetHandler, NULL) < 0) {
+          cerr << "pcap_loop() failed: " << pcap_geterr(descr);
+          return 1;
+      }
+      cout << "done processing." << endl;
+      cout << "FINAL STATS:" << endl;
+      printStats();
+      if (dump){
+        finalFlush();
+        dumpCtFile();
+        // dumpMClfrs();
+      }
+
+      pcap_close(descr);
+    }
   }
-  // start packet processing loop, just like live capture
-  if (pcap_loop(descr, 0, packetHandler, NULL) < 0) {
-      cerr << "pcap_loop() failed: " << pcap_geterr(descr);
-      return 1;
-  }
-  cout << "done processing." << endl;
-  cout << "FINAL STATS:" << endl;
-  printStats();
-  if (dump){
-    finalFlush();
-    dumpCtFile();
-    // dumpMClfrs();
-  }
+
   exit(0);
-
   return 0;
 }
 

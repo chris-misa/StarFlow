@@ -1,8 +1,11 @@
 #ifndef STARFLOW_AGGLEVELS_H
 #define STARFLOW_AGGLEVELS_H
 
+#include <arpa/inet.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+
 #define KEYLEN 13 // Length of key used in any flow tables. 
-#define NUM_KEYGENS 2
 
 typedef void (*starflow_setKey_t)(char *keyBuf, const struct ip* ipHeader, const struct udphdr* udpOrtcpHeader);
 
@@ -24,9 +27,22 @@ void setKey_ORIGINAL(char *keyBuf, const struct ip* ipHeader, const struct udphd
   memcpy(&(keyBuf[12]), &ipHeader->ip_p, 1);
 }
 
+void setKey_saturatedWorkload(char *keyBuf, const struct ip* ipHeader, const struct udphdr* udpOrtcpHeader){
+  uint32_t src = ipHeader->ip_src.s_addr & htonl(0xFFFF0000);
+  uint32_t dst = ipHeader->ip_dst.s_addr & htonl(0xFFFF0000);
+  struct tcphdr *tcp;
+  
+  if (ipHeader->ip_p == 6) {
+      tcp = (struct tcphdr *)udpOrtcpHeader;
+      memcpy(&(keyBuf[0]), &src, 4);
+      memcpy(&(keyBuf[4]), &dst, 4);
+      memcpy(&(keyBuf[8]), &tcp->th_flags, 1);
+  }
+}
+
+#define NUM_KEYGENS 1
 starflow_setKey_t key_gens[NUM_KEYGENS] = {
-    setKey_TEST,
-    setKey_ORIGINAL
+    setKey_saturatedWorkload,
 };
 
 int cur_key_gen = 0;
@@ -34,6 +50,7 @@ int cur_key_gen = 0;
 /* Dispatch to current keygen */
 void setKey(char *keyBuf, const struct ip* ipHeader, const struct udphdr* udpOrtcpHeader)
 {
+    memset(keyBuf, 0, KEYLEN);
     key_gens[cur_key_gen](keyBuf, ipHeader, udpOrtcpHeader);
 }
 
